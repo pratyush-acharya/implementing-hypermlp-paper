@@ -12,11 +12,3 @@ This architecture aims to provide a more expressive and potentially more efficie
 - **DPLR Sequence Mixing**: Diagonal Plus Low-Rank decomposition for sequence mixing matrices ($R^{(1)}$, $R^{(2)}$).
 - **HyperGLU**: A Gated Linear Unit variant of the HyperMLP layer for enhanced performance.
 
-## Objective
-
-Our goal is to provide a clean, modular, and faithful PyTorch implementation of the HyperMLP model. This codebase serves as a platform for:
-1.  Verifying the claims and performance metrics presented in the original paper.
-2.  Experimenting with the dynamic MLP interpretation of attention.
-3.  Exploring the "HyperGLU" variant and its impact on language modeling tasks.
-
-We are building the model from the ground up, starting with the core mixing layers and assembling them into full HyperMLP blocks.
