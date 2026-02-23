@@ -38,3 +38,6 @@ class HyperMLPConfig:
     rank_s: int = 16
     use_hyperglu: bool = True
     dropout: float = 0.0
+    batch_size: int = 8
+    vocab_size: int =1000
+    n_layers: int = 2

@@ -17,3 +17,9 @@ paper/
 
 # Lock files
 uv.lock
+
+# Wandb
+wandb/
+
+# Models
+models/

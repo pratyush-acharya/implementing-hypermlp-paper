@@ -75,7 +75,7 @@ class DPLRSequenceMixing(nn.Module):
         # then let's project y down using A
         y_proj_down = y @ A_t
         # gating and expansion
-        gating = torch.matmul(torch.mul(y_proj_down, s_t.reshape(s_t.shape[0], 1, s_t.shape[1])), B_t.T)
+        gating = torch.matmul(torch.mul(y_proj_down, s_t), B_t.T)
 
         return D + gating
 
