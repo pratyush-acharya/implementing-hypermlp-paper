@@ -38,11 +38,15 @@ class DPLRSequenceMixing(nn.Module):
         # - W_s: Linear(d_model, rank_s)
         # - A, B: Parameter(max_seq_len, rank_s)
         # - p: Parameter(max_seq_len)
-        self.w_s = nn.Linear(config.d_model, config.rank_s)
-        self.A = nn.Parameter(torch.randn(config.max_seq_len, config.rank_s))
-        self.B = nn.Parameter(torch.randn(config.max_seq_len, config.rank_s))
-        self.p = nn.Parameter(torch.randn(config.max_seq_len))
+        self.config = config
+        self.w_s = nn.Linear(config.d_model,config.n_heads * config.rank_s)
+        self.A = nn.Parameter(torch.randn(config.n_heads, config.max_seq_len, config.rank_s))
+        self.B = nn.Parameter(torch.randn(config.n_heads, config.max_seq_len, config.rank_s))
+        self.p = nn.Parameter(torch.randn(config.n_heads, config.max_seq_len))
         self.layer_idx = layer_idx
+        torch.nn.init.normal_(self.A, std=0.02)
+        torch.nn.init.normal_(self.B, std=0.02)
+        torch.nn.init.zeros_(self.p)
 
     def forward(self, x_t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """
@@ -63,19 +67,21 @@ class DPLRSequenceMixing(nn.Module):
         # 3. Apply Lemma G.1: yR = y \odot (1+p) + ((yA) \odot s^T) B^T
         # computing gate s_t
         s_t = torch.sigmoid(self.w_s(x_t))
+        s_t = s_t.view(x_t.size(0), x_t.size(1), self.config.n_heads, -1).permute(0, 2, 1, 3) # shape (batch_size, n_heads, 1, rank_s) for broadcasting
         # getting the slice
         t = y.shape[2] # shape (batch_size, heads, seq_len)
-        start = self.p.shape[0] - t
-        A_t = self.A[start:]
-        B_t = self.B[start:]
-        p_t = self.p[start:]
+        # start = self.p.shape[0] - t
+        A_t = self.A[ :, :t, :]
+        B_t = self.B[ :, :t, :]
+        p_t = self.p[ :, :t] # shape (n_heads, seq_len)
+        p_t = p_t.view(1, p_t.size(0), 1, p_t.size(1)) # shape (1, n_heads, 1, seq_len_t)
 
         # first diagonal Term
         D = torch.mul(y, (1+p_t)) 
         # then let's project y down using A
-        y_proj_down = y @ A_t
+        y_proj_down = y @ A_t 
         # gating and expansion
-        gating = torch.matmul(torch.mul(y_proj_down, s_t), B_t.T)
+        gating = torch.matmul(torch.mul(y_proj_down, s_t), B_t.transpose(-2, -1))
 
         return D + gating
 
@@ -119,14 +125,15 @@ class LowRankFeatureMixing(nn.Module):
         #   - W_k: Linear(d_model, d_qk)
         #   - W_m: Linear(d_model, d_qk) for the gate M
         self.is_readout = is_readout
+        self.config = config
         if self.is_readout:
-            self.w_v = nn.Linear(config.d_model, config.d_vo, bias=False)
-            self.w_o = nn.Linear(config.d_vo, config.d_model, bias=False)
-            self.w_m = nn.Linear(config.d_model, config.d_vo, bias=False)
+            self.w_v = nn.Linear(config.d_model, config.n_heads * config.d_vo, bias=False)
+            self.w_o = nn.Linear(config.n_heads * config.d_vo, config.d_model, bias=False)
+            self.w_m = nn.Linear(config.d_model, config.n_heads * config.d_vo, bias=False)
         else:
-            self.w_q = nn.Linear(config.d_model, config.d_qk, bias=False)
-            self.w_k = nn.Linear(config.d_model, config.d_qk, bias=False)
-            self.w_m = nn.Linear(config.d_model, config.d_qk, bias=False)
+            self.w_q = nn.Linear(config.d_model, config.n_heads * config.d_qk, bias=False)
+            self.w_k = nn.Linear(config.d_model, config.n_heads * config.d_qk, bias=False)
+            self.w_m = nn.Linear(config.d_model, config.n_heads * config.d_qk, bias=False)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -143,15 +150,16 @@ class LowRankFeatureMixing(nn.Module):
             The actual matrix $L$ is never formed fully. 
             The effective operation is $x L X^T = (x W_q \\odot m) (X W_k)^T$.
         """
+        b, s, _ = x.shape # batch_size, seq_len, ...
         if self.is_readout:
-            v = self.w_v(x)
+            v = self.w_v(x).view(b, s, self.config.n_heads, -1).permute(0, 2, 1, 3)
             o = self.w_o.weight
-            m_gate = torch.sigmoid(self.w_m(x))
+            m_gate = torch.sigmoid(self.w_m(x).view(b, s, self.config.n_heads, -1).permute(0, 2, 1, 3))
             return (v, m_gate, o)
 
-        q = self.w_q(x)
-        k = self.w_k(x)
-        m_gate = torch.sigmoid(self.w_m(x))
+        q = self.w_q(x).view(b, s, self.config.n_heads, -1).permute(0, 2, 1, 3)
+        k = self.w_k(x).view(b, s, self.config.n_heads, -1).permute(0, 2, 1, 3)
+        m_gate = torch.sigmoid(self.w_m(x).view(b, s, self.config.n_heads, -1).permute(0, 2, 1, 3))
 
         return (q, m_gate, k)
 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from .config import HyperMLPConfig
 from .hypermlp import HyperMLPBlock
-from typing import Optional
+from typing import Optional, List, Tuple
 import torch.nn.functional as F
 
 class FullTransformerBlock(nn.Module):
@@ -62,7 +62,7 @@ class HyperMLPModel(nn.Module):
         self.head = nn.Linear(self.config.d_model, self.config.vocab_size)
         
 
-    def forward(self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None):
+    def forward(self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, past_key_values: Optional[List[Tuple]] = None):
         """
         Forward pass for language modeling.
         
@@ -78,28 +78,21 @@ class HyperMLPModel(nn.Module):
         # 2. Iterate through blocks (handle residual connections and norms here if not in block)
         # 3. Final norm and projection
         # 4. Compute loss if labels are provided
-        x_embed = self.embeddings(input_ids)
-        _, seq_len, _ = x_embed.shape
-        layer_caches = [None] * len(self.blocks) 
-        all_hidden_states = []
-        for t in range(seq_len):
-            x_t = x_embed[:, t:t+1, :]
-            for idx, block in enumerate(self.blocks):
-                x, kv_cache = block(x_t, layer_caches[idx])
-                x_t = x
-                layer_caches[idx] = kv_cache
-            all_hidden_states.append(x_t)
+        x = self.embeddings(input_ids)
+        new_caches = []
 
-        full_sequence = torch.cat(all_hidden_states, dim=1)
-
-        # now pass the full sequnece to the final layers
-        logits = self.head(self.ln_f(full_sequence))
-
-        if labels is not None:
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), # Shape: [Batch*Seq_Len, Vocab]
-                labels.view(-1) # Shape: [Batch*Seq_len]
-            )
-            return loss, logits
+        # Pass the sequence entirely through the depth of the network
+        for idx, block in enumerate(self.blocks):
+            layer_cache = past_key_values[idx] if past_key_values is not None else None
+            x, new_cache = block(x, layer_cache)
+            new_caches.append(new_cache)
         
-        return logits
+        logits = self.head(self.ln_f(x))
+
+        loss = None
+        if labels is not None:
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        
+        return (loss, logits, new_caches) if labels is not None else (logits, new_caches)
